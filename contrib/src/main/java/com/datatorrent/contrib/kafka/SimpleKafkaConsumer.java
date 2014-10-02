@@ -323,7 +323,6 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     kafkaConsumerExecutor.shutdownNow();
   }
 
-  @Override
   public void setBufferSize(int bufferSize)
   {
     this.bufferSize = bufferSize;
@@ -339,7 +338,6 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     this.timeout = timeout;
   }
 
-  @Override
   public int getBufferSize()
   {
     return bufferSize;

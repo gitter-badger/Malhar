@@ -63,7 +63,7 @@ public abstract class KafkaConsumer implements Closeable
     this.brokerSet = brokerSet;
   }
 
-  private int bufferSize = 1024 * 1024;
+  private int cacheSize = 1024 * 1024;
 
   protected transient boolean isAlive = false;
 
@@ -101,7 +101,7 @@ public abstract class KafkaConsumer implements Closeable
    * This method is called in setup method of the operator
    */
   public void create(){
-    holdingBuffer = new ArrayBlockingQueue<Message>(bufferSize);
+    holdingBuffer = new ArrayBlockingQueue<Message>(cacheSize);
   };
 
   /**
@@ -180,14 +180,14 @@ public abstract class KafkaConsumer implements Closeable
     return initialOffset;
   }
   
-  public void setBufferSize(int bufferSize)
+  public int getCacheSize()
   {
-    this.bufferSize = bufferSize;
+    return cacheSize;
   }
   
-  public int getBufferSize()
+  public void setCacheSize(int cacheSize)
   {
-    return bufferSize;
+    this.cacheSize = cacheSize;
   }
 
 
