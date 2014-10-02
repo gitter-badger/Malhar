@@ -72,7 +72,7 @@ import kafka.message.MessageAndOffset;
  */
 public class SimpleKafkaConsumer extends KafkaConsumer
 {
-  
+
   public SimpleKafkaConsumer()
   {
     super();
@@ -100,24 +100,24 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     this.clientId = clientId;
     this.partitionIds = partitionIds;
   }
-  
+
   private static final Logger logger = LoggerFactory.getLogger(SimpleKafkaConsumer.class);
 
   /**
    * Track thread for each partition, clean the resource if necessary
    */
   private final transient HashMap<Integer, AtomicReference<SimpleConsumer>> simpleConsumerThreads = new HashMap<Integer, AtomicReference<SimpleConsumer>>();
-  
+
   private transient ExecutorService kafkaConsumerExecutor;
-  
-  private transient ScheduledExecutorService metadataRefreshExecutor; 
-  
+
+  private transient ScheduledExecutorService metadataRefreshExecutor;
+
   /**
    * The metadata refresh retry counter
    */
   private final transient AtomicInteger retryCounter = new AtomicInteger(0);
 
-  
+
   private int timeout = 10000;
 
   /**
@@ -130,35 +130,35 @@ public class SimpleKafkaConsumer extends KafkaConsumer
    */
   @NotNull
   private String clientId = "Kafka_Simple_Client";
-  
+
   /**
-   * interval in between reconnect if one kafka broker goes down in milliseconds 
-   * if metadataRefreshInterval < 0 it will never refresh the metadata 
-   * WARN: Turn off the metadata refresh will stop reacting to kafka broker fault tolerant  
+   * interval in between reconnect if one kafka broker goes down in milliseconds
+   * if metadataRefreshInterval < 0 it will never refresh the metadata
+   * WARN: Turn off the metadata refresh will stop reacting to kafka broker fault tolerant
    */
   private int metadataRefreshInterval = 10000;
-  
-  
+
+
   /**
    * Maximum brokers' metadata refresh retry limit
    * -1 means unlimited retry
    */
   private int metadataRefreshRetryLimit = -1;
-  
+
   /**
    * You can setup your particular partitionID you want to consume with *simple
-   * kafka consumer*. Use this to maximize the distributed performance. 
+   * kafka consumer*. Use this to maximize the distributed performance.
    * By default it's -1 which means #partitionSize anonymous threads will be
    * created to consume tuples from different partition
    */
   private Set<Integer> partitionIds = new HashSet<Integer>();
-  
-  
+
+
   /**
    * Track offset for each partition, so operator could start from the last serialized state
    * Use ConcurrentHashMap to avoid ConcurrentModificationException without blocking reads when updating in another thread(hashtable or synchronizedmap)
    */
-  private ConcurrentHashMap<Integer, Long> offsetTrack = new ConcurrentHashMap<Integer, Long>();
+  private final ConcurrentHashMap<Integer, Long> offsetTrack = new ConcurrentHashMap<Integer, Long>();
 
   @Override
   public void create()
@@ -183,14 +183,14 @@ public class SimpleKafkaConsumer extends KafkaConsumer
   public void start()
   {
     super.start();
-    
+
     // thread to consume the kafka data
     kafkaConsumerExecutor = Executors.newFixedThreadPool(simpleConsumerThreads.size(), new ThreadFactoryBuilder().setNameFormat("kafka-consumer-" + topic + "-%d").build());
-    
+
     // background thread to monitor the kafka metadata change
-    metadataRefreshExecutor = Executors.newScheduledThreadPool(simpleConsumerThreads.size(), new ThreadFactoryBuilder()
+    metadataRefreshExecutor = Executors.newScheduledThreadPool(1, new ThreadFactoryBuilder()
     .setNameFormat("kafka-consumer-monitor-" + topic + "-%d").setDaemon(true).build());
-    
+
     // start one monitor thread to monitor the leader broker change and trigger some action
     if (metadataRefreshInterval > 0) {
       metadataRefreshExecutor.scheduleAtFixedRate(new Runnable() {
@@ -228,20 +228,20 @@ public class SimpleKafkaConsumer extends KafkaConsumer
         }
       }, 0, metadataRefreshInterval, TimeUnit.MILLISECONDS);
     }
-    
-    
-    
+
+
+
     for (final Integer pid : simpleConsumerThreads.keySet()) {
       //  initialize the stats snapshot for this partition
       statsSnapShot.mark(pid, 0);
       final String clientName = getClientName(pid);
       kafkaConsumerExecutor.submit(new Runnable() {
-        
+
         AtomicReference<SimpleConsumer> csInThreadRef = simpleConsumerThreads.get(pid);
-        
+
         @Override
         public void run()
-        { 
+        {
           // read either from beginning of the broker or last offset committed by the operator
           long offset = 0L;
           if(offsetTrack.get(pid)!=null){
@@ -323,6 +323,7 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     kafkaConsumerExecutor.shutdownNow();
   }
 
+  @Override
   public void setBufferSize(int bufferSize)
   {
     this.bufferSize = bufferSize;
@@ -338,6 +339,7 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     this.timeout = timeout;
   }
 
+  @Override
   public int getBufferSize()
   {
     return bufferSize;
@@ -352,7 +354,7 @@ public class SimpleKafkaConsumer extends KafkaConsumer
   {
     return timeout;
   }
-  
+
   public int getMetadataRefreshInterval()
   {
     return metadataRefreshInterval;
@@ -382,7 +384,7 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     skc.resetOffset(startOffset);
     return skc;
   }
-  
+
   @Override
   protected KafkaConsumer cloneConsumer(Set<Integer> partitionIds){
     return cloneConsumer(partitionIds, null);
@@ -395,8 +397,8 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     // It's better to do server registry for client in the future. Wait for kafka community come up with more sophisticated offset management
     //TODO https://cwiki.apache.org/confluence/display/KAFKA/Inbuilt+Consumer+Offset+Management#
   }
-  
-  
+
+
   private String getClientName(int pid){
     return clientId + SIMPLE_CONSUMER_ID_SUFFIX + pid;
   }
@@ -406,9 +408,9 @@ public class SimpleKafkaConsumer extends KafkaConsumer
   {
     return offsetTrack;
   }
-  
+
   private void resetOffset(Map<Integer, Long> overrideOffset){
-    
+
     if(overrideOffset == null){
       return;
     }
@@ -421,7 +423,7 @@ public class SimpleKafkaConsumer extends KafkaConsumer
       }
     }
   }
-  
+
   @Override
   public KafkaMeterStats getConsumerStats()
   {
