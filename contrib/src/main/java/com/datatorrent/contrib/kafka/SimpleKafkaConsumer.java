@@ -134,9 +134,9 @@ public class SimpleKafkaConsumer extends KafkaConsumer
   /**
    * interval in between reconnect if one kafka broker goes down in milliseconds
    * if metadataRefreshInterval < 0 it will never refresh the metadata
-   * WARN: Turn off the metadata refresh will stop reacting to kafka broker fault tolerant
+   * WARN: Turning off the refresh will disable failover to new broker
    */
-  private int metadataRefreshInterval = 10000;
+  private int metadataRefreshInterval = 30000;
 
 
   /**
@@ -172,7 +172,7 @@ public class SimpleKafkaConsumer extends KafkaConsumer
     for (PartitionMetadata part : partitionMetaList) {
       final String clientName = getClientName(part.partitionId());
       if (defaultSelect || partitionIds.contains(part.partitionId())) {
-        logger.info("Create simple consumer and connect to {}:{} [timeout:{}, buffersize:{}, clientId: {}]", part.leader().host(), part.leader().port(), timeout, bufferSize, clientName);
+        logger.info("Connecting to {}:{} [timeout:{}, buffersize:{}, clientId: {}]", part.leader().host(), part.leader().port(), timeout, bufferSize, clientName);
         simpleConsumerThreads.put(part.partitionId(), new AtomicReference<SimpleConsumer>(new SimpleConsumer(part.leader().host(), part.leader().port(), timeout, bufferSize, clientName)));
       }
     }
@@ -217,7 +217,7 @@ public class SimpleKafkaConsumer extends KafkaConsumer
                   continue;
                 }
                 // clean the consumer to reestablish the new connection
-                logger.info("Find leader broker change, try to reconnect to leader broker {}:{} for partition {}", pm.leader().host(), pm.leader().port(), pid);
+                logger.info("Detected leader broker change, reconnecting to {}:{} for partition {}", pm.leader().host(), pm.leader().port(), pid);
                 cleanAndSet(pid, new SimpleConsumer(pm.leader().host(), pm.leader().port(), timeout, bufferSize, getClientName(pid)));
               }
             }
@@ -247,8 +247,10 @@ public class SimpleKafkaConsumer extends KafkaConsumer
           if(offsetTrack.get(pid)!=null){
             //start from recovery
             offset = offsetTrack.get(pid);
+            logger.debug("Partition {} offset {}", pid, offset);
           } else {
             long startOffsetReq = initialOffset.equalsIgnoreCase("earliest")? OffsetRequest.EarliestTime() : OffsetRequest.LatestTime();
+            logger.debug("Partition {} initial offset {} {}", pid, startOffsetReq, initialOffset);
             offset = KafkaMetadataUtil.getLastOffset(csInThreadRef.get(), topic, pid, startOffsetReq, clientName);
           }
           try {
