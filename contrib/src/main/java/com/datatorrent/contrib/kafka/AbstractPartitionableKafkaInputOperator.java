@@ -333,8 +333,32 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
   {
 
     Response resp = new Response();
-    resp.repartitionRequired = needPartition(stats);
+    List<KafkaMeterStats> kstats = extractKafkaStats(stats);
+    updateOffsets(kstats);
+    resp.repartitionRequired = needPartition(stats.getOperatorId(), kstats);
     return resp;
+  }
+  
+  private void updateOffsets(List<KafkaMeterStats> kstats)
+  {
+    //In every partition check interval, call offsetmanager to update the offsets
+    if (offsetManager != null) {
+      for (KafkaMeterStats kms : kstats) {
+        offsetManager.updateOffsets(getOffsetsForPartitions(kms));
+      }
+    }
+  }
+
+  private List<KafkaMeterStats> extractKafkaStats(BatchedOperatorStats stats)
+  {
+  //preprocess the stats
+    List<KafkaMeterStats> kmsList = new LinkedList<KafkaConsumer.KafkaMeterStats>();
+    for (OperatorStats os : stats.getLastWindowedStats()) {
+      if (os != null && os.counters instanceof KafkaMeterStats) {
+        kmsList.add((KafkaMeterStats) os.counters);
+      }
+    }
+    return kmsList;
   }
 
   /**
@@ -346,7 +370,7 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
    * @param stats
    * @return
    */
-  private boolean needPartition(BatchedOperatorStats stats)
+  private boolean needPartition(int opid, List<KafkaMeterStats> kstats)
   {
     
 
@@ -362,14 +386,8 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
       return false;
     }
 
-    //preprocess the stats
-    List<KafkaMeterStats> kmsList = new LinkedList<KafkaConsumer.KafkaMeterStats>();
-    for (OperatorStats os : stats.getLastWindowedStats()) {
-      if (os != null && os.counters instanceof KafkaMeterStats) {
-        kmsList.add((KafkaMeterStats) os.counters);
-      }
-    }
-    kafkaStatsHolder.put(stats.getOperatorId(), kmsList);
+
+    kafkaStatsHolder.put(opid, kstats);
 
     if (kafkaStatsHolder.size() != currentPartitionInfo.size() || currentPartitionInfo.size() == 0) {
       // skip checking if the operator hasn't collected all the stats from all the current partitions
@@ -377,13 +395,6 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
     }
 
     lastCheckTime = t;
-
-    //In every partition check interval, call offsetmanager to update the offsets
-    if (offsetManager != null) {
-      for (KafkaMeterStats kms : kmsList) {
-        offsetManager.updateOffsets(getOffsetsForPartitions(kms));
-      }
-    }
     
     // monitor if new kafka partition added
     {
@@ -413,7 +424,7 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
     // Hard constraint which is upper bound overall msgs/s or bytes/s
     // Soft constraint which is more optimal solution
 
-    boolean b = breakHardConstraint(kmsList) || breakSoftConstraint();
+    boolean b = breakHardConstraint(kstats) || breakSoftConstraint();
     if (b) {
       currentPartitionInfo.clear();
       kafkaStatsHolder.clear();
