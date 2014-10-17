@@ -39,6 +39,7 @@ import com.datatorrent.api.Stats.OperatorStats;
 import com.datatorrent.api.StatsListener;
 import com.datatorrent.contrib.kafka.KafkaConsumer.KafkaMeterStats;
 import static com.datatorrent.contrib.kafka.KafkaConsumer.KafkaMeterStatsUtil.*;
+import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Sets;
@@ -138,6 +139,7 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
     Map<Integer, Long> initOffset = null;
     if(isInitialParitition && offsetManager !=null){
       initOffset = offsetManager.loadInitialOffsets();
+      logger.info("Initial offsets: {} ", "{ " + Joiner.on(", ").useForNull("").withKeyValueSeparator(": ").join(initOffset) + " }");
     }
 
     switch (strategy) {
@@ -387,6 +389,7 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
       return false;
     }
     
+    logger.debug("Use OffsetManager to update offsets");
     updateOffsets(kstats);
     
     if(t - lastRepartitionTime < repartitionInterval) {
@@ -403,8 +406,6 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
     }
 
     try {
-
-      updateOffsets(kstats);
 
       // monitor if new kafka partition added
       {

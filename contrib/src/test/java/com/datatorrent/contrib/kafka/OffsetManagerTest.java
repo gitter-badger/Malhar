@@ -101,10 +101,8 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
         }
         out.close();
         fc.rename(tmpFile, dataFile, Rename.OVERWRITE);
-      } catch (IllegalArgumentException e) {
-        e.printStackTrace();
-      } catch (IOException e) {
-        e.printStackTrace();
+      } catch (Exception e) {
+        
       }
       
       countdownLatch();
@@ -201,7 +199,7 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
     try {
       FileSystem.get(new Configuration()).delete(new Path(TEST_TOPIC + OFFSET_FILE), true);
     } catch (IOException e) {
-      e.printStackTrace();
+      
     }
   }
 
