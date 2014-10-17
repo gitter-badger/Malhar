@@ -1,5 +1,22 @@
+/*
+ * Copyright (c) 2013 DataTorrent, Inc. ALL Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.datatorrent.contrib.kafka;
 
+import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -12,6 +29,12 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.*;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileContext;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Options.Rename;
+import org.apache.hadoop.fs.Path;
 import org.junit.Test;
 import org.slf4j.LoggerFactory;
 
@@ -37,15 +60,29 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
   static List<String> collectedTuples = new LinkedList<String>();
   static final int totalCount = 100;
   static CountDownLatch latch;
+  static final String OFFSET_FILE = ".offset";
 
   
   public static class TestOffsetManager implements OffsetManager{
 
-    private final Map<Integer, Long> offsets = new HashMap<Integer, Long>();
+    private final transient Map<Integer, Long> offsets = Collections.synchronizedMap(new HashMap<Integer, Long>());
+    
+    private String filename = null;
+    
+    private transient FileSystem fs = FileSystem.get(new Configuration());
+
+    private transient FileContext fc = FileContext.getFileContext(fs.getUri());
+    
+    public TestOffsetManager() throws IOException
+    {
+      
+    }
     
     @Override
     public Map<Integer, Long> loadInitialOffsets()
     {
+      offsets.put(0, 10l);
+      offsets.put(1, 10l);
       return offsets;
     }
 
@@ -55,6 +92,26 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
       
       offsets.putAll(offsetsOfPartitions);
       
+      try {
+        Path tmpFile = new Path(filename + ".tmp");
+        Path dataFile = new Path(filename);
+        FSDataOutputStream out = fs.create(tmpFile, true);
+        for (Entry<Integer, Long> e : offsets.entrySet()) {
+          out.writeBytes(e.getKey() +", " + e.getValue() + "\n");
+        }
+        out.close();
+        fc.rename(tmpFile, dataFile, Rename.OVERWRITE);
+      } catch (IllegalArgumentException e) {
+        e.printStackTrace();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+      
+      countdownLatch();
+    }
+    
+    private void countdownLatch()
+    {
       if (latch.getCount() == 1) {
         // when latch is 1, it means consumer has consumed all the messages
         int count = 0;
@@ -66,6 +123,16 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
           latch.countDown();
         }
       }
+    }
+
+    public void setFilename(String filename)
+    {
+      this.filename = filename;
+    }
+    
+    public String getFilename()
+    {
+      return filename;
     }
     
   }
@@ -120,10 +187,24 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
   public void testSimpleConsumerUpdateOffsets() throws Exception
   {
     // Create template simple consumer
-    SimpleKafkaConsumer consumer = new SimpleKafkaConsumer();
-    testPartitionableInputOperator(consumer);
+    try{
+      SimpleKafkaConsumer consumer = new SimpleKafkaConsumer();
+      testPartitionableInputOperator(consumer);
+    } finally {
+      // clean test offset file
+      cleanFile();
+    }
   }
   
+  private void cleanFile()
+  {
+    try {
+      FileSystem.get(new Configuration()).delete(new Path(TEST_TOPIC + OFFSET_FILE), true);
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+  }
+
   public void testPartitionableInputOperator(KafkaConsumer consumer) throws Exception{
     
     // Set to 3 because we want to make sure END_TUPLE from both 2 partitions are received and offsets has been updated to 102
@@ -135,6 +216,7 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
     p.setSendCount(totalCount);
     // wait the producer send all messages
     p.run();
+    p.close();
 
     // Create DAG for testing.
     LocalMode lma = LocalMode.newInstance();
@@ -143,7 +225,12 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
     // Create KafkaSinglePortStringInputOperator
     PartitionableKafkaSinglePortStringInputOperator node = dag.addOperator("Kafka message consumer", PartitionableKafkaSinglePortStringInputOperator.class);
     
-    node.setOffsetManager(new TestOffsetManager());
+    
+    TestOffsetManager tfm = new TestOffsetManager();
+    
+    tfm.setFilename(TEST_TOPIC + OFFSET_FILE);
+    
+    node.setOffsetManager(tfm);
     
     node.setStrategy(PartitionStrategy.ONE_TO_MANY.toString());
     
@@ -178,7 +265,7 @@ public class OffsetManagerTest extends KafkaOperatorTestBase
     
     
     // Check results
-    assertEquals("Tuple count", totalCount, collectedTuples.size());
+    assertEquals("Tuple count", totalCount -10 -10, collectedTuples.size());
     logger.debug(String.format("Number of emitted tuples: %d", collectedTuples.size()));
     
     p.close();

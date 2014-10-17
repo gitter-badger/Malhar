@@ -99,10 +99,11 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
   
   private OffsetManager offsetManager = null;
 
-  // To avoid uneven data stream, only allow at most 1 repartition in every 30 seconds
+  // Minimal interval between 2 (re)partition action
   private long repartitionInterval = 30000L;
 
-  // Check the collected stats at most once every 5 seconds
+  // Minimal interval between checking collected stats and decide whether it needs to repartition or not.
+  // Adn minimal interval between offset update
   private long repartitionCheckInterval = 5000L;
 
   private transient long lastCheckTime = 0L;
@@ -114,6 +115,8 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
   @Override
   public void partitioned(Map<Integer, Partition<AbstractPartitionableKafkaInputOperator>> partitions)
   {
+    // update the last repartition time
+    lastRepartitionTime = System.currentTimeMillis();
   }
 
   @Override
@@ -334,7 +337,6 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
 
     Response resp = new Response();
     List<KafkaMeterStats> kstats = extractKafkaStats(stats);
-    updateOffsets(kstats);
     resp.repartitionRequired = needPartition(stats.getOperatorId(), kstats);
     return resp;
   }
@@ -374,15 +376,21 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
   {
     
 
-    if(repartitionCheckInterval < 0 || repartitionInterval < 0){
+    if(repartitionInterval < 0){
       return false;
     }
 
     long t = System.currentTimeMillis();
 
-    if (t - lastRepartitionTime < repartitionInterval || t - lastCheckTime < repartitionCheckInterval) {
-      // ignore the stats reported and return immediately if it's within repartioinInterval since last repartition 
-      // or if it's still within repartitionCheckInterval seconds since last check
+    if (t - lastCheckTime < repartitionCheckInterval) {
+      // return false if it's within repartitionCheckInterval since last time it check the stats 
+      return false;
+    }
+    
+    updateOffsets(kstats);
+    
+    if(t - lastRepartitionTime < repartitionInterval) {
+      // return false if it's still within repartitionInterval since last (re)partition 
       return false;
     }
 
@@ -394,43 +402,49 @@ public abstract class AbstractPartitionableKafkaInputOperator extends AbstractKa
       return false;
     }
 
-    lastCheckTime = t;
-    
-    // monitor if new kafka partition added
-    {
-      Set<Integer> existingIds = new HashSet<Integer>();
-      for (PartitionInfo pio : currentPartitionInfo) {
-        existingIds.addAll(pio.kpids);
-      }
+    try {
 
-      for (PartitionMetadata metadata : KafkaMetadataUtil.getPartitionsForTopic(consumer.brokerSet, consumer.getTopic())) {
-        if (!existingIds.contains(metadata.partitionId())) {
-          newWaitingPartition.add(metadata.partitionId());
+      updateOffsets(kstats);
+
+      // monitor if new kafka partition added
+      {
+        Set<Integer> existingIds = new HashSet<Integer>();
+        for (PartitionInfo pio : currentPartitionInfo) {
+          existingIds.addAll(pio.kpids);
+        }
+
+        for (PartitionMetadata metadata : KafkaMetadataUtil.getPartitionsForTopic(consumer.brokerSet, consumer.getTopic())) {
+          if (!existingIds.contains(metadata.partitionId())) {
+            newWaitingPartition.add(metadata.partitionId());
+          }
+        }
+        if (newWaitingPartition.size() != 0) {
+          // found new kafka partition
+          lastRepartitionTime = t;
+          return true;
         }
       }
-      if (newWaitingPartition.size() != 0) {
-        // found new kafka partition
-        lastRepartitionTime = t;
-        return true;
+
+      if (strategy == PartitionStrategy.ONE_TO_ONE) {
+        return false;
       }
-    }
 
-    if (strategy == PartitionStrategy.ONE_TO_ONE) {
-      return false;
-    }
+      // This is expensive part and only every repartitionCheckInterval it will check existing the overall partitions
+      // and see if there is more optimal solution
+      // The decision is made by 2 constraint
+      // Hard constraint which is upper bound overall msgs/s or bytes/s
+      // Soft constraint which is more optimal solution
 
-    // This is expensive part and only every repartitionCheckInterval it will check existing the overall partitions and see if there is more optimal solution
-    // The decision is made by 2 constraint
-    // Hard constraint which is upper bound overall msgs/s or bytes/s
-    // Soft constraint which is more optimal solution
-
-    boolean b = breakHardConstraint(kstats) || breakSoftConstraint();
-    if (b) {
-      currentPartitionInfo.clear();
-      kafkaStatsHolder.clear();
-      lastRepartitionTime = t;
+      boolean b = breakHardConstraint(kstats) || breakSoftConstraint();
+      if (b) {
+        currentPartitionInfo.clear();
+        kafkaStatsHolder.clear();
+      }
+      return b;
+    } finally {
+      // update last  check time
+      lastCheckTime = System.currentTimeMillis();
     }
-    return b;
   }
 
   /**
